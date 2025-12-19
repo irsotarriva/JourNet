@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import bcrypt
 import os
 from dotenv import load_dotenv
-from supabase import create_client, Client
+from connect_sql import get_supabase_client
 
 router = APIRouter()
 
@@ -17,21 +17,16 @@ load_dotenv()
 # Configuration
 # -------------------
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# Get Supabase client from centralized module
+supabase = get_supabase_client()
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 
 # Validate required environment variables
-required_vars = ["SUPABASE_URL", "SUPABASE_KEY", "SECRET_KEY"]
-missing_vars = [var for var in required_vars if not os.getenv(var)]
-if missing_vars:
-    raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
-
-# Initialize Supabase client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+if not SECRET_KEY:
+    raise ValueError("Missing required environment variable: SECRET_KEY")
 
 # OAuth2 scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")

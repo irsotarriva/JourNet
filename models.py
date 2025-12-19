@@ -41,6 +41,4 @@ class Comment:
         self.articleId = articleId
         self.created_at = created_at
         self.summary = summary
-        self.last_updated = last_updated
-
-class 
+        self.last_updated = last_updated 
