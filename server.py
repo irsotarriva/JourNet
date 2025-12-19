@@ -22,20 +22,6 @@ class Server():
         uvicorn.run(self.app, host=host, port=port)
     def get_app(self):
         return self.app
-    def get_current_user(self, token: str = Depends(oauth2_scheme)):
-        try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            user_id: str = payload.get("sub")
-            if user_id is None:
-                raise HTTPException(status_code=401)
-        except JWTError:
-            raise HTTPException(status_code=401)
-
-        user = get_user_by_id(int(user_id))
-        if not user:
-            raise HTTPException(status_code=401)
-
-        return user
 
 # Get the app instance
 server_instance = Server()

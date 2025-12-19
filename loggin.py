@@ -3,10 +3,12 @@ from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 from jose import jwt, JWTError
 from datetime import datetime, timedelta
-import psycopg
 import bcrypt
 import os
 from dotenv import load_dotenv
+from supabase import create_client, Client
+
+router = APIRouter()
 
 # Load environment variables
 load_dotenv()
@@ -15,38 +17,24 @@ load_dotenv()
 # Configuration
 # -------------------
 
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = int(os.getenv("DB_PORT", 5432))
-DB_NAME = os.getenv("DB_NAME")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 
 # Validate required environment variables
-required_vars = ["DB_USER", "DB_PASSWORD", "DB_HOST", "DB_NAME", "SECRET_KEY"]
+required_vars = ["SUPABASE_URL", "SUPABASE_KEY", "SECRET_KEY"]
 missing_vars = [var for var in required_vars if not os.getenv(var)]
 if missing_vars:
     raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
-router = APIRouter()
+# Initialize Supabase client
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# OAuth2 scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
-
-# -------------------
-# Utility functions
-# -------------------
-
-def get_db_connection():
-    return psycopg.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-    )
 
 
 def hash_password(password: str) -> str:
@@ -98,34 +86,27 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: int | None = payload.get("sub")
-        email: str | None = payload.get("email")
-
-        if user_id is None or email is None:
+        user_id: str = payload.get("sub")
+        if user_id is None:
             raise credentials_exception
-
     except JWTError:
         raise credentials_exception
 
-    conn = get_db_connection()
+    # Query user from Supabase
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, name, email FROM users WHERE id = %s;",
-                (user_id,),
-            )
-            user = cur.fetchone()
-
-            if not user:
-                raise credentials_exception
-
-            return {
-                "id": user[0],
-                "name": user[1],
-                "email": user[2],
-            }
-    finally:
-        conn.close()
+        response = supabase.table("Users").select("id,name,email").eq("id", user_id).execute()
+        
+        if not response.data:
+            raise credentials_exception
+        
+        user = response.data[0]
+        return {
+            "id": user['id'],
+            "name": user['name'],
+            "email": user['email'],
+        }
+    except Exception:
+        raise credentials_exception
 
 
 # -------------------
@@ -137,69 +118,67 @@ def register_user(data: RegisterRequest):
     if data.password != data.confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match")
 
-    conn = get_db_connection()
-    conn.autocommit = True
-
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id FROM users WHERE email = %s OR name = %s;",
-                (data.email, data.name),
-            )
-            if cur.fetchone():
-                raise HTTPException(
-                    status_code=400,
-                    detail="User with this email or name already exists",
-                )
-
-            password_hash = hash_password(data.password)
-
-            cur.execute(
-                """
-                INSERT INTO users (name, email, password_hash)
-                VALUES (%s, %s, %s);
-                """,
-                (data.name, data.email, password_hash),
+        # Check if user already exists
+        existing_user = supabase.table("Users").select("id").or_("email.eq." + data.email + ",name.eq." + data.name).execute()
+        
+        if existing_user.data:
+            raise HTTPException(
+                status_code=400,
+                detail="User with this email or name already exists",
             )
 
+        # Hash password and insert user
+        password_hash = hash_password(data.password)
+        user_data = {
+            "name": data.name,
+            "email": data.email,
+            "password_hash": password_hash
+        }
+        
+        response = supabase.table("Users").insert(user_data).execute()
+        
+        if not response.data:
+            raise HTTPException(status_code=500, detail="Registration failed")
+        
         return {"message": "User registered successfully"}
 
-    finally:
-        conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Registration error: {str(e)}")  # Debug
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 
 @router.post("/login", response_model=Token)
 def login_user(data: LoginRequest):
-    conn = get_db_connection()
-
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, name, email, password_hash FROM users WHERE email = %s;",
-                (data.email,),
-            )
-            user = cur.fetchone()
+        # Get user from Supabase
+        response = supabase.table("Users").select("id,name,email,password_hash").eq("email", data.email).execute()
+        
+        if not response.data:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
 
-            if not user:
-                raise HTTPException(status_code=401, detail="Invalid credentials")
+        user = response.data[0]
+        user_id, name, email, password_hash = user['id'], user['name'], user['email'], user['password_hash']
 
-            user_id, name, email, password_hash = user
+        if not verify_password(data.password, password_hash):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
 
-            if not verify_password(data.password, password_hash):
-                raise HTTPException(status_code=401, detail="Invalid credentials")
+        access_token = create_access_token(
+            data={"sub": str(user_id), "email": email},
+            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        )
 
-            access_token = create_access_token(
-                data={"sub": str(user_id), "email": email},
-                expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-            )
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+        }
 
-            return {
-                "access_token": access_token,
-                "token_type": "bearer",
-            }
-
-    finally:
-        conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
 
 @router.get("/me")
