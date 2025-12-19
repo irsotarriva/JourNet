@@ -1,15 +1,23 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import uvicorn
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Depends
 
 class Server():
     """
     singleton class for accessing the FastAPI app instance
     """
-    app = FastAPI()
+    app = FastAPI(title="JourNet API")
     def __init__(self):
-        pass
+        # Add CORS middleware
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],  # Configure appropriately for production
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
     def start(self, host: str = "127.0.0.1", port: int = 8000):
         uvicorn.run(self.app, host=host, port=port)
     def get_app(self):
@@ -29,9 +37,15 @@ class Server():
 
         return user
 
-#example
+# Get the app instance
 server_instance = Server()
 app = server_instance.get_app()
+
+# Import auth router from loggin
+from loggin import router as auth_router
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
+
+# Example route (can be removed)
 class Item(BaseModel):
     name: str
     description: str
