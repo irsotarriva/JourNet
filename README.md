@@ -25,8 +25,13 @@ This project is licensed under GNU GENERAL PUBLIC LICENSE. See the [License](htt
 
 
 ## References
-[ArXiV](https://arxiv.org)
-[ArXiv Kaggle databse](https://www.kaggle.com/datasets/Cornell-University/arxiv)
-[OpenAI API pip page](https://pypi.org/project/openai/)
-[Mongo DB](https://www.mongodb.com/docs/)
-[Orcid Oauth API](https://info.orcid.org/documentation/api-tutorials/api-tutorial-get-and-authenticated-orcid-id/)
+
+- [ArXiV](https://arxiv.org)
+- [ArXiv Kaggle databse](https://www.kaggle.com/datasets/Cornell-University/arxiv)
+- [OpenAI API pip page](https://pypi.org/project/openai/)
+- [Mongo DB](https://www.mongodb.com/docs/)
+- [PyMongo](https://pymongo.readthedocs.io/en/stable/)
+- [Pydantic](https://pydantic.dev/)
+- [Orcid Oauth API](https://info.orcid.org/documentation/api-tutorials/api-tutorial-get-and-authenticated-orcid-id/)
+- [FastAPI](https://fastapi.tiangolo.com/)
+- [Quadrant API](https://www.quadrant.io/developers/api)
