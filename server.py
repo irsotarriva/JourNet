@@ -4,6 +4,10 @@ import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Depends
 
+# Import routers
+from loggin import router as auth_router
+from comment import router as comment_router
+
 class Server():
     """
     singleton class for accessing the FastAPI app instance
@@ -27,9 +31,9 @@ class Server():
 server_instance = Server()
 app = server_instance.get_app()
 
-# Import auth router from loggin
-from loggin import router as auth_router
+# Register routers
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
+app.include_router(comment_router, prefix="/comments", tags=["comments"])
 
 # Root route
 @app.get("/")
@@ -40,6 +44,7 @@ def root():
         "endpoints": {
             "docs": "/docs",
             "auth": "/auth",
+            "comments": "/comments",
             "items": "/items"
         }
     }

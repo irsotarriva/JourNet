@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 from jose import jwt, JWTError
 from datetime import datetime, timedelta
@@ -28,8 +28,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 if not SECRET_KEY:
     raise ValueError("Missing required environment variable: SECRET_KEY")
 
-# OAuth2 scheme
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+# Bearer token security scheme
+security = HTTPBearer()
 
 
 def hash_password(password: str) -> str:
@@ -72,7 +72,7 @@ class Token(BaseModel):
 # Auth helpers
 # -------------------
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -80,6 +80,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     )
 
     try:
+        token = credentials.credentials
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         if user_id is None:
@@ -90,10 +91,10 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     # Query user from Supabase
     try:
         response = supabase.table("Users").select("id,name,email").eq("id", user_id).execute()
-        
+
         if not response.data:
             raise credentials_exception
-        
+
         user = response.data[0]
         return {
             "id": user['id'],
