@@ -14,18 +14,19 @@ from sentence_transformers import SentenceTransformer
 
 class RecommendationEngine:
     qdrant_client = QdrantClient(
-        url="https://ab493be3-1f1f-4d1b-9f6d-150d5daca89d.sa-east-1-0.aws.cloud.qdrant.io:6333", 
-        api_key=os.getenv("QDRANT_API_KEY"),
-        check_compatibility=False
+        url=os.getenv("QUADRANT_URL"),
+        api_key=os.getenv("QUADRANT_KEY")
     )
     collection_name = "arxiv_papers"
     model = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B")
     def __init__(self):
-        pass
+        print(self.qdrant_client.get_collections())
     def get_paper_by_id(self, paper_id: str) -> models.Paper:
         result = self.qdrant_client.retrieve(
             collection_name=self.collection_name,
             ids=[paper_id],
+            with_payload=True,
+            with_vectors=True,
         )
         print("Scroll result:", result)
         """
@@ -148,7 +149,7 @@ if __name__ == "__main__":
     for paper_rec in recommendations:
         print(f"Paper ID: {paper_rec.uuid}, Title: {paper_rec.title}")
     """
-    paper_id = "14"
+    paper_id = 14
     paper_rec = engine.get_paper_by_id(paper_id)
     if paper_rec:
         print(f"Paper ID: {paper_rec.uuid}, Title: {paper_rec.title}", f"Authors: {[author.name for author in paper_rec.authors]}")
