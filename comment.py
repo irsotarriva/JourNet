@@ -21,7 +21,6 @@ class CommentCreate(BaseModel):
     onReview: bool = False
     comment: str
     articleId: int
-    summary: Optional[str] = None
 
 
 class CommentResponse(BaseModel):
@@ -35,13 +34,11 @@ class CommentResponse(BaseModel):
     downVotes: int
     articleId: int
     created_at: datetime
-    summary: Optional[str]
     last_updated: Optional[datetime]
 
 
 class CommentUpdate(BaseModel):
     comment: Optional[str] = None
-    summary: Optional[str] = None
     isAnonymous: Optional[bool] = None
     onReview: Optional[bool] = None
 
@@ -67,7 +64,6 @@ def create_comment(data: CommentCreate, current_user=Depends(get_current_user)):
             "upVotes": 0,
             "downVotes": 0,
             "articleId": data.articleId,
-            "summary": data.summary,
             "last_updated": datetime.utcnow().isoformat()
         }
 
@@ -188,8 +184,6 @@ def update_comment(comment_id: int, data: CommentUpdate, current_user=Depends(ge
         update_data = {}
         if data.comment is not None:
             update_data["comment"] = data.comment
-        if data.summary is not None:
-            update_data["summary"] = data.summary
         if data.isAnonymous is not None:
             update_data["isAnonymous"] = data.isAnonymous
         if data.onReview is not None:

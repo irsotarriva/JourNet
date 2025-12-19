@@ -7,6 +7,7 @@ from fastapi import Depends
 # Import routers
 from loggin import router as auth_router
 from comment import router as comment_router
+from reading_list import router as reading_list_router
 
 class Server():
     """
@@ -34,6 +35,7 @@ app = server_instance.get_app()
 # Register routers
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(comment_router, prefix="/comments", tags=["comments"])
+app.include_router(reading_list_router, prefix="/reading-list", tags=["reading-list"])
 
 # Root route
 @app.get("/")
@@ -45,6 +47,7 @@ def root():
             "docs": "/docs",
             "auth": "/auth",
             "comments": "/comments",
+            "reading-list": "/reading-list",
             "items": "/items"
         }
     }
