@@ -31,6 +31,19 @@ app = server_instance.get_app()
 from loggin import router as auth_router
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 
+# Root route
+@app.get("/")
+def root():
+    return {
+        "message": "Welcome to JourNet API",
+        "status": "running",
+        "endpoints": {
+            "docs": "/docs",
+            "auth": "/auth",
+            "items": "/items"
+        }
+    }
+
 # Example route (can be removed)
 class Item(BaseModel):
     name: str
