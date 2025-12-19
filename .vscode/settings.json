@@ -1,0 +1,19 @@
+{
+    "dbcode.connections": [
+        {
+            "connectionId": "2KLDh6f3CyHu1_tKg-1xw",
+            "name": "journet",
+            "driver": "postgres",
+            "connectionType": "host",
+            "host": "172.31.2.247",
+            "port": 5432,
+            "ssl": false,
+            "username": "remote",
+            "password": "",
+            "savePassword": "secretStorage",
+            "readOnly": false,
+            "postConnectionSqlType": "inline",
+            "connectionTimeout": 30
+        }
+    ]
+}
