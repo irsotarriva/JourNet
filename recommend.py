@@ -21,8 +21,14 @@ load_dotenv()
 router = APIRouter()
 @router.get("/", response_model=list[papers.PaperResponse])
 def recommend_papers(current_user=Depends(get_current_user), top_k: int = 10) -> list[papers.PaperResponse]:
+    #get the max id in supabase
+    supabase: Client = get_supabase_client()
+    response = supabase.table("Papers").select("id").order("id", desc=True).limit(1).execute()
+    max_id = 0
+    if response.data:
+        max_id = response.data[0]["id"]
     user_id = current_user["id"]
-    recommended_papers = get_recommendation(user_id, top_k=top_k)
+    recommended_papers = get_recommendation(user_id, top_k=top_k, max_id=max_id)
     papers_l = []
     for paperid in recommended_papers:
         try:
@@ -31,12 +37,6 @@ def recommend_papers(current_user=Depends(get_current_user), top_k: int = 10) ->
                 papers_l.append(paper)
         except Exception as e:
             print("Warning: Failed fetching paper ID", paperid, ":", str(e))
-    #get the max id in supabase
-    supabase: Client = get_supabase_client()
-    response = supabase.table("Papers").select("id").order("id", desc=True).limit(1).execute()
-    max_id = 0
-    if response.data:
-        max_id = response.data[0]["id"]
     #pad with random papers if necessary
     while len(papers_l) < top_k:
         import random
@@ -52,8 +52,16 @@ def recommend_papers(current_user=Depends(get_current_user), top_k: int = 10) ->
 
 @router.get("/search/", response_model=list[papers.PaperResponse])
 def search_recommendations(query: str, current_user=Depends(get_current_user), top_k: int = 5) -> list[papers.PaperResponse]:
+    print("Search Query:", query)
+    #get the max id in supabase
+    supabase: Client = get_supabase_client()
+    response = supabase.table("Papers").select("id").order("id", desc=True).limit(1).execute()
+    max_id = 0
+    if response.data:
+        max_id = response.data[0]["id"]
     user_id = current_user["id"]
-    recommended_papers = search_papers(user_id, query, top_k)
+    print("User ID:", user_id)
+    recommended_papers = search_papers(user_id, query, top_k, max_id=max_id)
     print("Search Recommended Papers IDs:", recommended_papers)
     papers_l = []
     for paperid in recommended_papers:
@@ -64,12 +72,6 @@ def search_recommendations(query: str, current_user=Depends(get_current_user), t
                 papers_l.append(paper)
         except Exception as e:
             print("Warning: Failed fetching paper ID", paperid, ":", str(e))
-    #get the max id in supabase
-    supabase: Client = get_supabase_client()
-    response = supabase.table("Papers").select("id").order("id", desc=True).limit(1).execute()
-    max_id = 0
-    if response.data:
-        max_id = response.data[0]["id"]
     #pad with random papers if necessary
     while len(papers_l) < top_k:
         import random
@@ -84,6 +86,12 @@ def search_recommendations(query: str, current_user=Depends(get_current_user), t
 
 @router.get("/friends/", response_model=list[papers.PaperResponse])
 def find_friends(paper_id: int, top_k: int = 5) -> list[papers.PaperResponse]:
+    #get the max id in supabase
+    supabase: Client = get_supabase_client()
+    response = supabase.table("Papers").select("id").order("id", desc=True).limit(1).execute()
+    max_id = 0
+    if response.data:
+        max_id = response.data[0]["id"]
     recommendation_engine = RecommendationEngine()
     paper_vector = recommendation_engine.get_vector_by_paper_id(paper_id)
     print("Paper Vector:", paper_vector)
@@ -92,7 +100,8 @@ def find_friends(paper_id: int, top_k: int = 5) -> list[papers.PaperResponse]:
     recommended_papers = recommendation_engine.get_recommendation(
         positive_embeddings=[paper_vector],
         negative_embeddings=[],
-        top_k=top_k
+        top_k=top_k,
+        max_id=max_id
     )
     print("Friendly Papers IDs:", recommended_papers)
     papers_l = []
@@ -105,12 +114,6 @@ def find_friends(paper_id: int, top_k: int = 5) -> list[papers.PaperResponse]:
                 papers_l.append(paper)
         except Exception as e:
             print("Warning: Failed fetching paper ID", paperid, ":", str(e))
-    #get the max id in supabase
-    supabase: Client = get_supabase_client()
-    response = supabase.table("Papers").select("id").order("id", desc=True).limit(1).execute()
-    max_id = 0
-    if response.data:
-        max_id = response.data[0]["id"]
     #pad with random papers if necessary
     while len(papers_l) < top_k:
         import random
@@ -195,7 +198,7 @@ def _get_user_history_embeddings(user_id: str) -> tuple[list[np.ndarray], list[n
                 negative_embeddings.append(embedding)
     return positive_embeddings, negative_embeddings
 
-def get_recommendation(user_id: int, top_k: int = 10) -> list[int]:
+def get_recommendation(user_id: int, top_k: int = 10, max_id: int = 5000) -> list[int]:
     """
     @brief Get paper recommendations for a user based on their history. 
     @param user_id: ID of the user to get recommendations for.
@@ -203,14 +206,27 @@ def get_recommendation(user_id: int, top_k: int = 10) -> list[int]:
     """
     recommendation_engine = RecommendationEngine()
     positive_embeddings, negative_embeddings = _get_user_history_embeddings(user_id)
+    filter = qdrant_models.Filter(
+        must = [
+            qdrant_models.FieldCondition(
+                key="supaIndex",
+                range =qdrant_models.Range(
+                    key="supaIndex",
+                    gte=1,
+                    lte=int(max_id)
+                ),
+            )
+        ]
+    )
     # Get recommendations
     recommended_papers = recommendation_engine.get_recommendation(
         positive_embeddings=positive_embeddings,
         negative_embeddings=negative_embeddings,
-        top_k=top_k
+        top_k=top_k,
+        filter=filter
     )
     return recommended_papers
-def search_papers(user_id: int, query: str, top_k: int = 5) -> list[int]:
+def search_papers(user_id: int, query: str, top_k: int = 5, max_id: int = 5000) -> list[int]:
     """
     @brief Search for papers based on a query string, the output is filtered based on relevance to the specific user.
     @param user_id: ID of the user to filter recommendations for.
@@ -239,6 +255,15 @@ def search_papers(user_id: int, query: str, top_k: int = 5) -> list[int]:
                 match=qdrant_models.MatchPhrase(phrase=query)
             )
         ],
+        must = [
+            qdrant_models.FieldCondition(
+                key="supaIndex",
+                range =qdrant_models.Range(
+                    gte=1,
+                    lte=int(max_id)
+                )
+            )
+        ]
     )
     # Get recommendations with filter
     recommended_papers = recommendation_engine.get_recommendation(
@@ -430,11 +455,14 @@ class RecommendationEngine:
         return embedding
 
 if __name__ == "__main__":
-    user_id = "3659c33f-9c82-40d1-aa93-7088827fa2c8"
-    recommendedId = get_recommendation(user_id)
-    papers_found = search_papers(user_id, "diphoton")
-    print("Recommended Paper IDs:", [paper.id for paper in recommendedId])
-    print("Search Paper IDs:", [paper.id for paper in papers_found])
+    engine = RecommendationEngine()
+    #index the supaIndex
+    engine.qdrant_client.create_payload_index(
+        collection_name=engine.collection_name,
+        field_name="supaIndex",
+        field_schema="integer",
+    )
+
     """
     engine = RecommendationEngine()
     # Example usage
