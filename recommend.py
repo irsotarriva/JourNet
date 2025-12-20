@@ -248,20 +248,75 @@ def get_recommendation(user_id: int, top_k: int = 10, max_id: int = 5000) -> lis
         filter=filter
     )
     return recommended_papers
+    return recommended_papers
+
+def _get_exact_matches(query: str, limit: int = 10) -> list[int]:
+    """
+    @brief Get exact matches for a query string in the Papers table, sorted by comment count.
+    @param query: Search query string.
+    @param limit: Max number of matches to return.
+    @return: List of paper IDs.
+    """
+    supabase: Client = get_supabase_client()
+    # Simple sanitization/formatting for ilike
+    # We want matches in title OR abstract
+    filter_str = f"title.ilike.%{query}%,abstract.ilike.%{query}%"
+    
+    # Fetch papers (fetch more than limit to allow sorting)
+    try:
+        response = supabase.table("Papers").select("id").or_(filter_str).limit(50).execute()
+        papers_data = response.data
+    except Exception as e:
+        print(f"Error fetching exact matches: {e}")
+        return []
+
+    if not papers_data:
+        return []
+
+    paper_ids = [p['id'] for p in papers_data]
+
+    # Fetch discussion counts for these papers
+    try:
+        response_comments = supabase.table("Discussion").select("articleId").in_("articleId", paper_ids).execute()
+        comment_counts = {}
+        for c in response_comments.data:
+            aid = c['articleId']
+            comment_counts[aid] = comment_counts.get(aid, 0) + 1
+        
+        # Sort paper_ids by count desc
+        paper_ids.sort(key=lambda pid: comment_counts.get(pid, 0), reverse=True)
+    except Exception as e:
+        print(f"Error fetching exact match comments: {e}")
+        # Return unsorted or partially sorted if comments fail
+    
+    return paper_ids[:limit]
+
 def search_papers(user_id: int, query: str, top_k: int = 5, max_id: int = 5000) -> list[int]:
     """
-    @brief Search for papers based on a query string, the output is filtered based on relevance to the specific user.
-    @param user_id: ID of the user to filter recommendations for.
+    @brief Search for papers using a hybrid approach: Exact matches first, then vector similarity.
+    @param user_id: ID of the user.
     @param query: Search query string.
-    @param top_k: Number of top results to return.
+    @param top_k: Total number of results desired.
     @return: List of recommended paper IDs.
     """
+    # 1. Get exact matches (Top 4 mostly related by comments)
+    exact_matches = _get_exact_matches(query, limit=4)
+    exact_ids_set = set(exact_matches)
+    
+    # 2. Fill the rest with recommendation engine
     recommendation_engine = RecommendationEngine()
     query_embedding = recommendation_engine.embed_text(query)
-    # Get user history embeddings for filtering
+    
     positive_embeddings, negative_embeddings = _get_user_history_embeddings(user_id)
     positive_embeddings.append(query_embedding)
-    # Create a SHOULD filter for phrase matching in title, authors, or abstract
+    
+    remaining_slots = max(0, top_k - len(exact_matches))
+    # If we need more, fetch a bit extra to handle duplicates
+    vector_k = remaining_slots + len(exact_matches) + 2
+    
+    # Use vector search to find conceptually similar papers
+    # We still use the title/abstract match as a SHOULD filter to boost relevance, 
+    # but the primary goal is filling the slots with relevant content
     filter = qdrant_models.Filter(
         should = [
             qdrant_models.FieldCondition(
@@ -287,14 +342,27 @@ def search_papers(user_id: int, query: str, top_k: int = 5, max_id: int = 5000) 
             )
         ]
     )
-    # Get recommendations with filter
+    
     recommended_papers = recommendation_engine.get_recommendation(
         positive_embeddings=positive_embeddings,
         negative_embeddings=negative_embeddings,
-        top_k=top_k,
+        top_k=vector_k,
         filter=filter
     )
-    return recommended_papers
+    
+    # Combine results
+    final_results = []
+    # Add exact matches
+    final_results.extend(exact_matches)
+    
+    # Add vector matches if NOT in exact matches
+    for pid in recommended_papers:
+        if pid not in exact_ids_set:
+            final_results.append(pid)
+            if len(final_results) >= top_k:
+                break
+                
+    return final_results
 
 
 class RecommendationEngine:
