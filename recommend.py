@@ -23,13 +23,58 @@ router = APIRouter()
 def recommend_papers(current_user=Depends(get_current_user), top_k: int = 10) -> list[papers.PaperResponse]:
     user_id = current_user["id"]
     recommended_papers = get_recommendation(user_id, top_k=top_k)
-    return [papers.get_paper(paperid) for paperid in recommended_papers]
+    print("Recommended Papers IDs:", recommended_papers)
+    papers_l = []
+    for paperid in recommended_papers:
+        try:
+            paper = papers.get_paper(int(paperid))
+            print("Fetched Paper:", paper)
+            if paper:
+                papers_l.append(paper)
+        except Exception as e:
+            print("Warning: Failed fetching paper ID", paperid, ":", str(e))
+    return papers_l
 
 @router.get("/search/", response_model=list[papers.PaperResponse])
 def search_recommendations(query: str, current_user=Depends(get_current_user), top_k: int = 5) -> list[papers.PaperResponse]:
     user_id = current_user["id"]
     recommended_papers = search_papers(user_id, query, top_k)
-    return [papers.get_paper(paperid) for paperid in recommended_papers]
+    print("Search Recommended Papers IDs:", recommended_papers)
+    papers_l = []
+    for paperid in recommended_papers:
+        try:
+            paper = papers.get_paper(int(paperid))
+            print("Fetched Paper:", paper)
+            if paper:
+                papers_l.append(paper)
+        except Exception as e:
+            print("Warning: Failed fetching paper ID", paperid, ":", str(e))
+    return papers_l
+
+@router.get("/friends/", response_model=list[papers.PaperResponse])
+def find_friends(paper_id: int, top_k: int = 5) -> list[papers.PaperResponse]:
+    recommendation_engine = RecommendationEngine()
+    paper_vector = recommendation_engine.get_vector_by_paper_id(paper_id)
+    print("Paper Vector:", paper_vector)
+    if paper_vector is None:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    recommended_papers = recommendation_engine.get_recommendation(
+        positive_embeddings=[paper_vector],
+        negative_embeddings=[],
+        top_k=top_k
+    )
+    print("Friendly Papers IDs:", recommended_papers)
+    papers_l = []
+    for paperid in recommended_papers:
+        try:
+            paper = papers.get_paper(int(paperid))
+            print("My friend is:", paperid)
+            print("Fetched Paper:", paper)
+            if paper:
+                papers_l.append(paper)
+        except Exception as e:
+            print("Warning: Failed fetching paper ID", paperid, ":", str(e))
+    return papers_l
 
 def _get_user_history_embeddings(user_id: str) -> tuple[list[np.ndarray], list[np.ndarray]]:
     """
@@ -241,14 +286,10 @@ class RecommendationEngine:
             query_filter = filter
         )
         results = recommendation.points
-        papers = []
+        paper_ids = []
         for result in results:
-            paper_id = result.payload.get("supaIndex", None)
-            if paper_id is not None:
-                paper = self.get_paper_by_id(int(paper_id))
-                if paper is not None:
-                    papers.append(paper)
-        return papers
+            paper_ids.append(result.payload.get("supaIndex", None))
+        return paper_ids
 
     """
     def add_supabase_index_to_payload(self, batch_size: int = 256):
