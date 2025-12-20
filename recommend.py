@@ -110,14 +110,15 @@ def _get_user_history_embeddings(user_id: str) -> tuple[list[np.ndarray], list[n
                 paper_embebdings[paper_id] = vector
                 paper_weights[paper_id] = paper_weights.get(paper_id, 0) + 1
                 seen_paper_ids.add(paper_id)
-    for paper in paper_ids_in_reading_list.data:
-        paper_id = paper["paperid"]
-        if paper_id not in seen_paper_ids:
-            vector = recommendation_engine.get_vector_by_paper_id(paper_id)
-            if vector is not None:
-                paper_embebdings[paper_id] = vector
-                paper_weights[paper_id] = paper_weights.get(paper_id, 0) + 2
-                seen_paper_ids.add(paper_id)
+    for reading_list in paper_ids_in_reading_list.data:
+        paper_ids = reading_list.get("paperid") or []
+        for paper_id in paper_ids:
+            if paper_id not in seen_paper_ids:
+                vector = recommendation_engine.get_vector_by_paper_id(paper_id)
+                if vector is not None:
+                    paper_embebdings[paper_id] = vector
+                    paper_weights[paper_id] = paper_weights.get(paper_id, 0) + 2
+                    seen_paper_ids.add(paper_id)
     for rating in user_ratings.data:
         paper_id = rating["paperid"]
         rating_value = rating["rating"]
