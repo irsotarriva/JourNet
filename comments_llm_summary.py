@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 import requests
 from connect_sql import get_supabase_client
 from loggin import get_current_user
+from papers import get_paper_by_id_db
 
 router = APIRouter()
 
@@ -20,7 +21,7 @@ HUGGING_FACE_API_KEY = os.getenv("HUGGING_FACE_API_KEY")
 if not HUGGING_FACE_API_KEY:
     print("WARNING: HUGGING_FACE_API_KEY not found in .env file")
 
-HUGGING_FACE_API_URL = "https://router.huggingface.co/models/facebook/bart-large-cnn"
+HUGGING_FACE_API_URL = "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn"
 
 
 # -------------------
@@ -67,28 +68,10 @@ def calculate_comment_score(comment):
     return up_votes - down_votes
 
 
-def get_paper_abstract(paper_id: int):
-    """
-    Retrieve the abstract of a paper from the Papers table.
-    """
-    try:
-        response = (
-            supabase.table("Papers")
-            .select("abstract")
-            .eq("id", paper_id)
-            .execute()
-        )
-        if response.data and len(response.data) > 0:
-            return response.data[0].get("abstract", "")
-        return ""
-    except Exception as e:
-        raise Exception(f"Failed to retrieve paper abstract: {str(e)}")
-
-
 def prepare_weighted_comments_text(comments, paper_abstract):
     """
     Prepare text for summarization with weighted comments and paper abstract.
-    - Filters out comments with negative scores
+    - Filters out comments with negative scores (score < 0)
     - Weights comments by positive scores (higher score = more repetitions)
     - Adds paper abstract as context
     """
@@ -101,8 +84,8 @@ def prepare_weighted_comments_text(comments, paper_abstract):
 
         score = calculate_comment_score(comment)
 
-        # Only include comments with positive scores
-        if score > 0:
+        # Only include comments with non-negative scores (>= 0)
+        if score >= 0:
             scored_comments.append({
                 "text": comment_text,
                 "score": score
@@ -120,26 +103,22 @@ def prepare_weighted_comments_text(comments, paper_abstract):
         text_parts.append("")  # Empty line for separation
 
     # Add weighted comments
-    # For simplicity, we'll repeat high-scored comments to give them more weight
-    # Comments with score >= 5 get repeated 3 times
-    # Comments with score 3-4 get repeated 2 times
-    # Comments with score 1-2 get included once
     text_parts.append("Discussion Comments:")
     for i, comment_data in enumerate(scored_comments, 1):
         score = comment_data["score"]
         text = comment_data["text"]
 
-        if score >= 5:
+        if score >= 10:
             # High importance - repeat 3 times
             text_parts.append(f"[High-rated comment {i}]: {text}")
             text_parts.append(f"[Important]: {text}")
             text_parts.append(f"[Highly upvoted]: {text}")
-        elif score >= 3:
+        elif score >= 5:
             # Medium importance - repeat 2 times
             text_parts.append(f"[Well-received comment {i}]: {text}")
             text_parts.append(f"[Upvoted]: {text}")
         else:
-            # Low importance - include once
+            # Low importance (score 0-2) - include once
             text_parts.append(f"Comment {i}: {text}")
 
     return " ".join(text_parts)
@@ -175,14 +154,21 @@ def generate_summary_with_huggingface(text: str) -> str:
         )
 
         if response.status_code == 200:
-            result = response.json()
-            if isinstance(result, list) and len(result) > 0:
-                return result[0].get("summary_text", "")
-            else:
-                raise Exception("Unexpected API response format")
+            try:
+                result = response.json()
+                if isinstance(result, list) and len(result) > 0:
+                    return result[0].get("summary_text", "")
+                else:
+                    raise Exception(f"Unexpected API response format: {result}")
+            except requests.exceptions.JSONDecodeError:
+                raise Exception(f"Failed to parse successful response: {response.text[:200]}")
         else:
-            error_msg = response.json().get("error", "Unknown error")
-            raise Exception(f"Hugging Face API error: {error_msg}")
+            try:
+                error_msg = response.json().get("error", "Unknown error")
+            except requests.exceptions.JSONDecodeError:
+                error_msg = response.text[:200]
+            
+            raise Exception(f"Hugging Face API error (Status {response.status_code}): {error_msg}")
 
     except requests.exceptions.Timeout:
         raise Exception("Hugging Face API request timed out")
@@ -222,12 +208,16 @@ def summarize_paper_comments(paper_id: int, current_user=Depends(get_current_use
     Requires authentication.
     """
     try:
-        # Check if paper exists
-        paper_response = supabase.table("Papers").select("id, title").eq("id", paper_id).execute()
-        if not paper_response.data:
+        # Check if paper exists and get abstract
+        try:
+            paper_data = get_paper_by_id_db(paper_id)
+            paper_abstract = paper_data.get("abstract", "")
+        except HTTPException:
+            raise
+        except Exception as e:
             raise HTTPException(
-                status_code=404,
-                detail=f"Paper with ID {paper_id} not found"
+                status_code=500,
+                detail=f"Failed to retrieve paper: {str(e)}"
             )
 
         # Get all comments for the paper
@@ -244,16 +234,8 @@ def summarize_paper_comments(paper_id: int, current_user=Depends(get_current_use
                 message=f"Paper has only {comments_count} comments. Need at least 10 comments to generate summary."
             )
 
-        # Prepare text for summarization
-        # Concatenate all comments with separators
-        comment_texts = []
-        for i, comment in enumerate(comments, 1):
-            comment_text = comment.get("comment", "")
-            if comment_text:
-                # Add comment number for context
-                comment_texts.append(f"Comment {i}: {comment_text}")
-
-        full_text = " ".join(comment_texts)
+        # Prepare text for summarization (with abstract and scoring logic)
+        full_text = prepare_weighted_comments_text(comments, paper_abstract)
 
         # Check if text is too long (BART has a limit)
         # If too long, truncate intelligently
@@ -351,6 +333,19 @@ def batch_summarize_papers(paper_ids: list[int], current_user=Depends(get_curren
 
     for paper_id in paper_ids:
         try:
+            # Check if paper exists and get abstract
+            try:
+                paper_data = get_paper_by_id_db(paper_id)
+                paper_abstract = paper_data.get("abstract", "")
+            except:
+                results.append({
+                    "paper_id": paper_id,
+                    "success": False,
+                    "message": "Paper not found",
+                    "comments_count": 0
+                })
+                continue
+
             # Get comments count
             comments = get_all_comments_for_paper(paper_id)
             comments_count = len(comments)
@@ -364,10 +359,8 @@ def batch_summarize_papers(paper_ids: list[int], current_user=Depends(get_curren
                 })
                 continue
 
-            # Prepare and summarize
-            comment_texts = [f"Comment {i}: {c.get('comment', '')}"
-                           for i, c in enumerate(comments, 1) if c.get('comment')]
-            full_text = " ".join(comment_texts)
+            # Prepare text for summarization
+            full_text = prepare_weighted_comments_text(comments, paper_abstract)
 
             # Truncate if needed
             MAX_CHARS = 5000
