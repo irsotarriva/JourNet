@@ -284,6 +284,102 @@ def summarize_paper_comments(paper_id: int, current_user=Depends(get_current_use
         )
 
 
+@router.post("/{paper_id}/generate-summary")
+def generate_paper_summary(paper_id: int, current_user=Depends(get_current_user)):
+    """
+    Generate and save an AI summary for a paper.
+    Works even if there are no comments - uses abstract as the basis.
+    If there are comments, they will be included in the summary.
+    Requires authentication.
+    """
+    try:
+        # Check if paper exists and get abstract
+        try:
+            paper_data = get_paper_by_id_db(paper_id)
+            paper_abstract = paper_data.get("abstract", "")
+            existing_summary = paper_data.get("comments_summary", "")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to retrieve paper: {str(e)}"
+            )
+
+        # If summary already exists, return it
+        if existing_summary:
+            return {
+                "paper_id": paper_id,
+                "summary": existing_summary,
+                "generated": False,
+                "message": "Summary already exists"
+            }
+
+        # Check if we have an abstract
+        if not paper_abstract:
+            raise HTTPException(
+                status_code=400,
+                detail="Paper has no abstract to summarize"
+            )
+
+        # Get all comments for the paper (may be empty)
+        comments = get_all_comments_for_paper(paper_id)
+        comments_count = len(comments)
+
+        # Prepare text for summarization
+        if comments_count > 0:
+            # Use abstract + comments
+            full_text = prepare_weighted_comments_text(comments, paper_abstract)
+        else:
+            # Use just the abstract - create a summarization prompt
+            full_text = f"Paper Abstract: {paper_abstract}"
+
+        # Truncate if needed
+        MAX_CHARS = 5000
+        if len(full_text) > MAX_CHARS:
+            full_text = full_text[:MAX_CHARS] + "..."
+
+        # Generate summary using Hugging Face
+        try:
+            summary = generate_summary_with_huggingface(full_text)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate summary: {str(e)}"
+            )
+
+        if not summary:
+            raise HTTPException(
+                status_code=500,
+                detail="Summary generation returned empty result"
+            )
+
+        # Update the paper with the summary
+        try:
+            update_paper_summary(paper_id, summary)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to save summary to database: {str(e)}"
+            )
+
+        return {
+            "paper_id": paper_id,
+            "summary": summary,
+            "comments_count": comments_count,
+            "generated": True,
+            "message": f"Successfully generated summary from abstract{' and ' + str(comments_count) + ' comments' if comments_count > 0 else ''}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate summary: {str(e)}"
+        )
+
+
 @router.get("/{paper_id}/summary")
 def get_paper_comments_summary(paper_id: int):
     """
