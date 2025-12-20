@@ -8,6 +8,7 @@ from fastapi import Depends
 from loggin import router as auth_router
 from comment import router as comment_router
 from reading_list import router as reading_list_router
+from ratings import router as ratings_router
 
 class Server():
     """
@@ -36,6 +37,7 @@ app = server_instance.get_app()
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(comment_router, prefix="/comments", tags=["comments"])
 app.include_router(reading_list_router, prefix="/reading-list", tags=["reading-list"])
+app.include_router(ratings_router, prefix="/ratings", tags=["ratings"])
 
 # Root route
 @app.get("/")
@@ -48,6 +50,7 @@ def root():
             "auth": "/auth",
             "comments": "/comments",
             "reading-list": "/reading-list",
+            "ratings": "/ratings",
             "items": "/items"
         }
     }

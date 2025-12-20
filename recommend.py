@@ -18,7 +18,7 @@ class RecommendationEngine:
         api_key=os.getenv("QUADRANT_KEY")
     )
     collection_name = "arxiv_papers"
-    model = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B")
+    #model = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B")
     def __init__(self):
         print(self.qdrant_client.get_collections())
     def get_paper_by_id(self, paper_id: str) -> models.Paper:
