@@ -259,8 +259,10 @@ def upvote_comment(comment_id: int, current_user=Depends(get_current_user)):
     Upvote a comment.
     """
     try:
-        # Get current vote count
-        response = supabase.table("Discussion").select("upVotes").eq("id", comment_id).execute()
+        user_id = current_user["id"]
+
+        # Get current vote counts
+        response = supabase.table("Discussion").select("upVotes, downVotes").eq("id", comment_id).execute()
 
         if not response.data:
             raise HTTPException(
@@ -268,20 +270,60 @@ def upvote_comment(comment_id: int, current_user=Depends(get_current_user)):
                 detail="Comment not found"
             )
 
-        current_upvotes = response.data[0]["upVotes"]
+        current_upvotes = response.data[0]["upVotes"] or 0
+        current_downvotes = response.data[0]["downVotes"] or 0
 
-        # Increment upvote
-        update_response = (
-            supabase.table("Discussion")
-            .update({"upVotes": current_upvotes + 1})
-            .eq("id", comment_id)
-            .execute()
-        )
+        # Check if user already voted
+        vote_response = supabase.table("CommentVotes").select("*").eq("comment_id", comment_id).eq("userid", user_id).execute()
 
-        return {
-            "message": "Comment upvoted successfully",
-            "upVotes": update_response.data[0]["upVotes"]
-        }
+        if vote_response.data:
+            existing_vote = vote_response.data[0]
+            if existing_vote["vote_type"] == "upvote":
+                raise HTTPException(
+                    status_code=400,
+                    detail="You already upvoted this comment"
+                )
+            elif existing_vote["vote_type"] == "downvote":
+                # Changing downvote to upvote
+                # 1. Update CommentVotes
+                supabase.table("CommentVotes").update({"vote_type": "upvote"}).eq("vote_id", existing_vote["vote_id"]).execute()
+                # 2. Update Discussion: +1 upvote, -1 downvote
+                new_up = current_upvotes + 1
+                new_down = max(0, current_downvotes - 1)
+                
+                update_response = (
+                    supabase.table("Discussion")
+                    .update({"upVotes": new_up, "downVotes": new_down})
+                    .eq("id", comment_id)
+                    .execute()
+                )
+                return {
+                    "message": "Vote changed to upvote",
+                    "upVotes": new_up,
+                    "downVotes": new_down
+                }
+        else:
+            # New upvote
+            # 1. Insert into CommentVotes
+            supabase.table("CommentVotes").insert({
+                "userid": user_id, 
+                "comment_id": comment_id, 
+                "vote_type": "upvote"
+            }).execute()
+            
+            # 2. Update Discussion: +1 upvote
+            new_up = current_upvotes + 1
+            update_response = (
+                supabase.table("Discussion")
+                .update({"upVotes": new_up})
+                .eq("id", comment_id)
+                .execute()
+            )
+            return {
+                "message": "Comment upvoted successfully",
+                "upVotes": new_up,
+                "downVotes": current_downvotes
+            }
 
     except HTTPException:
         raise
@@ -298,8 +340,10 @@ def downvote_comment(comment_id: int, current_user=Depends(get_current_user)):
     Downvote a comment.
     """
     try:
-        # Get current vote count
-        response = supabase.table("Discussion").select("downVotes").eq("id", comment_id).execute()
+        user_id = current_user["id"]
+
+        # Get current vote counts
+        response = supabase.table("Discussion").select("upVotes, downVotes").eq("id", comment_id).execute()
 
         if not response.data:
             raise HTTPException(
@@ -307,20 +351,60 @@ def downvote_comment(comment_id: int, current_user=Depends(get_current_user)):
                 detail="Comment not found"
             )
 
-        current_downvotes = response.data[0]["downVotes"]
+        current_upvotes = response.data[0]["upVotes"] or 0
+        current_downvotes = response.data[0]["downVotes"] or 0
 
-        # Increment downvote
-        update_response = (
-            supabase.table("Discussion")
-            .update({"downVotes": current_downvotes + 1})
-            .eq("id", comment_id)
-            .execute()
-        )
+        # Check if user already voted
+        vote_response = supabase.table("CommentVotes").select("*").eq("comment_id", comment_id).eq("userid", user_id).execute()
 
-        return {
-            "message": "Comment downvoted successfully",
-            "downVotes": update_response.data[0]["downVotes"]
-        }
+        if vote_response.data:
+            existing_vote = vote_response.data[0]
+            if existing_vote["vote_type"] == "downvote":
+                raise HTTPException(
+                    status_code=400,
+                    detail="You already downvoted this comment"
+                )
+            elif existing_vote["vote_type"] == "upvote":
+                # Changing upvote to downvote
+                # 1. Update CommentVotes
+                supabase.table("CommentVotes").update({"vote_type": "downvote"}).eq("vote_id", existing_vote["vote_id"]).execute()
+                # 2. Update Discussion: -1 upvote, +1 downvote
+                new_up = max(0, current_upvotes - 1)
+                new_down = current_downvotes + 1
+                
+                update_response = (
+                    supabase.table("Discussion")
+                    .update({"upVotes": new_up, "downVotes": new_down})
+                    .eq("id", comment_id)
+                    .execute()
+                )
+                return {
+                    "message": "Vote changed to downvote",
+                    "upVotes": new_up,
+                    "downVotes": new_down
+                }
+        else:
+            # New downvote
+            # 1. Insert into CommentVotes
+            supabase.table("CommentVotes").insert({
+                "userid": user_id, 
+                "comment_id": comment_id, 
+                "vote_type": "downvote"
+            }).execute()
+            
+            # 2. Update Discussion: +1 downvote
+            new_down = current_downvotes + 1
+            update_response = (
+                supabase.table("Discussion")
+                .update({"downVotes": new_down})
+                .eq("id", comment_id)
+                .execute()
+            )
+            return {
+                "message": "Comment downvoted successfully",
+                "upVotes": current_upvotes,
+                "downVotes": new_down
+            }
 
     except HTTPException:
         raise

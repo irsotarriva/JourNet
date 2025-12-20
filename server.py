@@ -39,7 +39,7 @@ app = server_instance.get_app()
 # Register routers
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(comment_router, prefix="/comments", tags=["comments"])
-app.include_router(reading_list_router, prefix="/reading-list", tags=["reading-list"])
+app.include_router(reading_list_router, prefix="/reading-lists", tags=["reading-list"])
 app.include_router(ratings_router, prefix="/ratings", tags=["ratings"])
 app.include_router(summary_router, prefix="/summary", tags=["summary"])
 app.include_router(papers_router, prefix="/papers", tags=["papers"])
@@ -55,7 +55,7 @@ def root():
             "docs": "/docs",
             "auth": "/auth",
             "comments": "/comments",
-            "reading-list": "/reading-list",
+            "reading-lists": "/reading-lists",
             "ratings": "/ratings",
             "summary": "/summary",
             "papers": "/papers",
