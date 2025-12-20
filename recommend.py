@@ -23,16 +23,31 @@ router = APIRouter()
 def recommend_papers(current_user=Depends(get_current_user), top_k: int = 10) -> list[papers.PaperResponse]:
     user_id = current_user["id"]
     recommended_papers = get_recommendation(user_id, top_k=top_k)
-    print("Recommended Papers IDs:", recommended_papers)
     papers_l = []
     for paperid in recommended_papers:
         try:
             paper = papers.get_paper(int(paperid))
-            print("Fetched Paper:", paper)
             if paper:
                 papers_l.append(paper)
         except Exception as e:
             print("Warning: Failed fetching paper ID", paperid, ":", str(e))
+    #get the max id in supabase
+    supabase: Client = get_supabase_client()
+    response = supabase.table("Papers").select("id").order("id", desc=True).limit(1).execute()
+    max_id = 0
+    if response.data:
+        max_id = response.data[0]["id"]
+    #pad with random papers if necessary
+    while len(papers_l) < top_k:
+        import random
+        random_id = random.randint(1, max_id)
+        try:
+            paper = papers.get_paper(int(random_id))
+            if paper and paper not in papers_l:
+                papers_l.append(paper)
+        except Exception as e:
+            print("Warning: Failed fetching paper ID", random_id, ":", str(e))
+    print("Recommended Papers IDs:", recommended_papers)
     return papers_l
 
 @router.get("/search/", response_model=list[papers.PaperResponse])
@@ -49,6 +64,22 @@ def search_recommendations(query: str, current_user=Depends(get_current_user), t
                 papers_l.append(paper)
         except Exception as e:
             print("Warning: Failed fetching paper ID", paperid, ":", str(e))
+    #get the max id in supabase
+    supabase: Client = get_supabase_client()
+    response = supabase.table("Papers").select("id").order("id", desc=True).limit(1).execute()
+    max_id = 0
+    if response.data:
+        max_id = response.data[0]["id"]
+    #pad with random papers if necessary
+    while len(papers_l) < top_k:
+        import random
+        random_id = random.randint(1, max_id)
+        try:
+            paper = papers.get_paper(int(random_id))
+            if paper and paper not in papers_l:
+                papers_l.append(paper)
+        except Exception as e:
+            print("Warning: Failed fetching paper ID", random_id, ":", str(e))
     return papers_l
 
 @router.get("/friends/", response_model=list[papers.PaperResponse])
@@ -74,6 +105,22 @@ def find_friends(paper_id: int, top_k: int = 5) -> list[papers.PaperResponse]:
                 papers_l.append(paper)
         except Exception as e:
             print("Warning: Failed fetching paper ID", paperid, ":", str(e))
+    #get the max id in supabase
+    supabase: Client = get_supabase_client()
+    response = supabase.table("Papers").select("id").order("id", desc=True).limit(1).execute()
+    max_id = 0
+    if response.data:
+        max_id = response.data[0]["id"]
+    #pad with random papers if necessary
+    while len(papers_l) < top_k:
+        import random
+        random_id = random.randint(1, max_id)
+        try:
+            paper = papers.get_paper(int(random_id))
+            if paper and paper not in papers_l:
+                papers_l.append(paper)
+        except Exception as e:
+            print("Warning: Failed fetching paper ID", random_id, ":", str(e))
     return papers_l
 
 def _get_user_history_embeddings(user_id: str) -> tuple[list[np.ndarray], list[np.ndarray]]:
