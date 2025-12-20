@@ -27,11 +27,11 @@ class CommentResponse(BaseModel):
     id: int
     parent: Optional[int] 
     userId: str
-    isAnonymous: bool
-    onReview: bool
+    isAnonymous: Optional[bool] = False
+    onReview: Optional[bool] = False
     comment: str
-    upVotes: int
-    downVotes: int
+    upVotes: Optional[int] = 0
+    downVotes: Optional[int] = 0
     articleId: int
     created_at: datetime
     last_updated: Optional[datetime]
@@ -328,4 +328,162 @@ def downvote_comment(comment_id: int, current_user=Depends(get_current_user)):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to downvote comment: {str(e)}"
+        )
+
+
+@router.get("/user/threads")
+def get_user_discussion_threads(current_user=Depends(get_current_user)):
+    """
+    Get all discussion threads that the user has participated in.
+    Returns complete hierarchical thread structures with user comments highlighted.
+    """
+    try:
+        user_id = current_user["id"]
+        print(f"DEBUG: Fetching threads for user_id: {user_id}")
+        
+        # Get all comments by the user
+        user_comments = (
+            supabase.table("Discussion")
+            .select("id, parent, articleId, created_at")
+            .eq("userId", user_id)
+            .execute()
+        )
+        
+        print(f"DEBUG: Found {len(user_comments.data) if user_comments.data else 0} user comments")
+        
+        if not user_comments.data:
+            return {
+                "threads": [],
+                "count": 0
+            }
+        
+        # Group by article and find root comments
+        article_threads = {}
+        
+        for comment in user_comments.data:
+            article_id = comment["articleId"]
+            
+            if article_id not in article_threads:
+                article_threads[article_id] = set()
+            
+            # Find root comment for this comment
+            root_id = comment["id"]
+            parent_id = comment.get("parent")
+            
+            if parent_id:
+                # Traverse up to find root
+                current_parent = parent_id
+                max_depth = 100
+                depth = 0
+                
+                while current_parent and depth < max_depth:
+                    parent_comment = (
+                        supabase.table("Discussion")
+                        .select("id, parent")
+                        .eq("id", current_parent)
+                        .execute()
+                    )
+                    
+                    if parent_comment.data:
+                        root_id = parent_comment.data[0]["id"]
+                        current_parent = parent_comment.data[0].get("parent")
+                        depth += 1
+                    else:
+                        break
+            
+            article_threads[article_id].add(root_id)
+        
+        # Build complete thread structures
+        result_threads = []
+        
+        for article_id, root_ids in article_threads.items():
+            # Get paper info
+            paper_response = (
+                supabase.table("Papers")
+                .select("id, title, abstract")
+                .eq("id", article_id)
+                .execute()
+            )
+            
+            paper_title = "Unknown Paper"
+            paper_abstract = ""
+            if paper_response.data:
+                paper_title = paper_response.data[0].get("title", "Unknown Paper")
+                paper_abstract = paper_response.data[0].get("abstract", "")
+            
+            # For each root comment, build the complete thread
+            for root_id in root_ids:
+                # Get all comments for this article
+                all_article_comments = (
+                    supabase.table("Discussion")
+                    .select("*")
+                    .eq("articleId", article_id)
+                    .execute()
+                )
+                
+                if not all_article_comments.data:
+                    continue
+                
+                # Build comment map
+                comment_map = {}
+                for comment in all_article_comments.data:
+                    comment_map[comment["id"]] = comment
+                
+                # Build hierarchical structure starting from root
+                def build_thread_tree(comment_id):
+                    if comment_id not in comment_map:
+                        return None
+                    
+                    comment = comment_map[comment_id]
+                    
+                    # Find children
+                    children = []
+                    for cid, c in comment_map.items():
+                        if c.get("parent") == comment_id:
+                            child_tree = build_thread_tree(cid)
+                            if child_tree:
+                                children.append(child_tree)
+                    
+                    # Sort children by created_at
+                    children.sort(key=lambda x: x["created_at"])
+                    
+                    return {
+                        "id": comment["id"],
+                        "userId": comment["userId"],
+                        "comment": comment["comment"],
+                        "created_at": comment["created_at"],
+                        "upVotes": comment.get("upVotes", 0),
+                        "downVotes": comment.get("downVotes", 0),
+                        "isUserComment": comment["userId"] == user_id,
+                        "children": children
+                    }
+                
+                thread_tree = build_thread_tree(root_id)
+                
+                if thread_tree:
+                    result_threads.append({
+                        "article_id": article_id,
+                        "paper_title": paper_title,
+                        "paper_abstract": paper_abstract,
+                        "root_comment_id": root_id,
+                        "thread": thread_tree
+                    })
+        
+        # Sort by most recent activity (we can use root comment creation time as proxy)
+        result_threads.sort(key=lambda x: x["thread"]["created_at"], reverse=True)
+        
+        print(f"DEBUG: Returning {len(result_threads)} threads")
+        
+        return {
+            "threads": result_threads,
+            "count": len(result_threads)
+        }
+    
+    except Exception as e:
+        print(f"ERROR: Failed to retrieve user threads: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve user threads: {str(e)}"
         )
