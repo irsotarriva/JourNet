@@ -10,15 +10,151 @@ from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 from sentence_transformers import SentenceTransformer
 from connect_sql import get_supabase_client
 from supabase import Client
-
+from fastapi import APIRouter, HTTPException, Depends, status
 import server
+import papers
+from loggin import get_current_user
 
 # Load environment variables once
 load_dotenv()
 
-server_instance = server.Server()
-app = server_instance.get_app()
+router = APIRouter()
+@router.get("/", response_model=list[papers.PaperResponse])
+def recommend_papers(current_user=Depends(get_current_user), top_k: int = 10) -> list[papers.PaperResponse]:
+    user_id = current_user["id"]
+    recommended_papers = get_recommendation(user_id, top_k=top_k)
+    return [papers.get_paper(paperid) for paperid in recommended_papers]
 
+@router.get("/search/", response_model=list[papers.PaperResponse])
+def search_recommendations(query: str, current_user=Depends(get_current_user), top_k: int = 5) -> list[papers.PaperResponse]:
+    user_id = current_user["id"]
+    recommended_papers = search_papers(user_id, query, top_k)
+    return [papers.get_paper(paperid) for paperid in recommended_papers]
+
+def _get_user_history_embeddings(user_id: str) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    """
+    @brief Fetch user history from Supabase and get positive and negative embeddings.
+    @param user_id: ID of the user to fetch history for.
+    @return: Tuple of lists containing positive and negative embeddings.
+    @details The user history is fetched from the Supabase database, and the recommendation engine is used to suggest papers.
+    Suggestions are based on a weighted combination of the embedding vectors of the papers the user has interacted with. The weights are as follows:
+    - +1 per comment on a paper
+    - +2 per appearance in user reading list
+    - +3 for 5-star ratings
+    - +2 for 4-star ratings
+    - +1 for 3-star ratings
+    - -1 for 1-star ratings
+    """
+    supabase: Client = get_supabase_client()
+    # find all the user comments
+    paper_ids_associated_with_comments = supabase.table("Discussion").select("articleId").eq("userId", user_id).execute()
+    #find all the papers in the user reading list
+    paper_ids_in_reading_list = supabase.table("ReadingList").select("paperid").eq("userid", user_id).execute()
+    #find all the user ratings
+    user_ratings = supabase.table("Ratings").select("paperid", "rating").eq("userid", user_id).execute()
+    #make a dictionary to store the vectors and weights
+    seen_paper_ids = set()
+    paper_embebdings = {}
+    paper_weights = {}
+    recommendation_engine = RecommendationEngine()
+    for paper in paper_ids_associated_with_comments.data:
+        paper_id = paper["articleId"]
+        if paper_id not in seen_paper_ids:
+            vector = recommendation_engine.get_vector_by_paper_id(paper_id)
+            if vector is not None:
+                paper_embebdings[paper_id] = vector
+                paper_weights[paper_id] = paper_weights.get(paper_id, 0) + 1
+                seen_paper_ids.add(paper_id)
+    for paper in paper_ids_in_reading_list.data:
+        paper_id = paper["paperid"]
+        if paper_id not in seen_paper_ids:
+            vector = recommendation_engine.get_vector_by_paper_id(paper_id)
+            if vector is not None:
+                paper_embebdings[paper_id] = vector
+                paper_weights[paper_id] = paper_weights.get(paper_id, 0) + 2
+                seen_paper_ids.add(paper_id)
+    for rating in user_ratings.data:
+        paper_id = rating["paperid"]
+        rating_value = rating["rating"]
+        if paper_id not in seen_paper_ids:
+            vector = recommendation_engine.get_vector_by_paper_id(paper_id)
+            if vector is not None:
+                paper_embebdings[paper_id] = vector
+                if rating_value == 5:
+                    paper_weights[paper_id] = paper_weights.get(paper_id, 0) + 3
+                elif rating_value == 4:
+                    paper_weights[paper_id] = paper_weights.get(paper_id, 0) + 2
+                elif rating_value == 3:
+                    paper_weights[paper_id] = paper_weights.get(paper_id, 0) + 1
+                elif rating_value == 1:
+                    paper_weights[paper_id] = paper_weights.get(paper_id, 0) - 1
+                seen_paper_ids.add(paper_id)
+    # Prepare positive and negative embeddings
+    positive_embeddings = []
+    negative_embeddings = []
+    for paper_id, weight in paper_weights.items():
+        embedding = paper_embebdings[paper_id]
+        if weight > 0:
+            for _ in range(weight):
+                positive_embeddings.append(embedding)
+        elif weight < 0:
+            for _ in range(-weight):
+                negative_embeddings.append(embedding)
+    return positive_embeddings, negative_embeddings
+
+def get_recommendation(user_id: int, top_k: int = 10) -> list[int]:
+    """
+    @brief Get paper recommendations for a user based on their history. 
+    @param user_id: ID of the user to get recommendations for.
+    @return: List of recommended paper IDs.
+    """
+    recommendation_engine = RecommendationEngine()
+    positive_embeddings, negative_embeddings = _get_user_history_embeddings(user_id)
+    # Get recommendations
+    recommended_papers = recommendation_engine.get_recommendation(
+        positive_embeddings=positive_embeddings,
+        negative_embeddings=negative_embeddings,
+        top_k=top_k
+    )
+    return recommended_papers
+def search_papers(user_id: int, query: str, top_k: int = 5) -> list[int]:
+    """
+    @brief Search for papers based on a query string, the output is filtered based on relevance to the specific user.
+    @param user_id: ID of the user to filter recommendations for.
+    @param query: Search query string.
+    @param top_k: Number of top results to return.
+    @return: List of recommended paper IDs.
+    """
+    recommendation_engine = RecommendationEngine()
+    query_embedding = recommendation_engine.embed_text(query)
+    # Get user history embeddings for filtering
+    positive_embeddings, negative_embeddings = _get_user_history_embeddings(user_id)
+    positive_embeddings.append(query_embedding)
+    # Create a SHOULD filter for phrase matching in title, authors, or abstract
+    filter = qdrant_models.Filter(
+        should = [
+            qdrant_models.FieldCondition(
+                key="title",
+                match=qdrant_models.MatchPhrase(phrase=query)
+            ),
+            qdrant_models.FieldCondition(
+                key="authors",
+                match=qdrant_models.MatchPhrase(phrase=query)
+            ),
+            qdrant_models.FieldCondition(
+                key="abstract",
+                match=qdrant_models.MatchPhrase(phrase=query)
+            )
+        ],
+    )
+    # Get recommendations with filter
+    recommended_papers = recommendation_engine.get_recommendation(
+        positive_embeddings=positive_embeddings,
+        negative_embeddings=negative_embeddings,
+        top_k=top_k,
+        filter=filter
+    )
+    return recommended_papers
 
 
 class RecommendationEngine:
@@ -83,7 +219,7 @@ class RecommendationEngine:
             return None
         result = result[0][0]
         return np.array(result.vector)
-    def get_recommendation(self, positive_embeddings: list[np.ndarray] = [], negative_embeddings: list[np.ndarray] = [], top_k: int = 5, filter: qdrant_models.Filter = None) -> list[models.Paper]:
+    def get_recommendation(self, positive_embeddings: list[np.ndarray] = [], negative_embeddings: list[np.ndarray] = [], top_k: int = 5, filter: qdrant_models.Filter = None) -> list[int]:
         if filter is None:
             filter = qdrant_models.Filter(
                 must_not = [
@@ -107,30 +243,17 @@ class RecommendationEngine:
         results = recommendation.points
         papers = []
         for result in results:
-            str_authors = result.payload.get("authors", "")
-            author_list = []
-            if str_authors:
-                authors_split = str_authors.split(", ")
-                for author_name in authors_split:
-                    author_list.append(models.Author(name=author_name))
-            papers.append(models.Paper(
-                id=result.payload.get("supaIndex", ""),
-                title=result.payload.get("title", ""),
-                abstract=result.payload.get("abstract", ""),
-                authors=author_list,
-                journal_ref=result.payload.get("journal_ref", ""),
-                doi=result.payload.get("doi", ""),
-                report_number=result.payload.get("report_number", ""),
-                categories=result.payload.get("categories", "").split(", "),
-                paper_license=result.payload.get("paper_license", ""),
-                comments=result.payload.get("comments", "")
-            ))
+            paper_id = result.payload.get("supaIndex", None)
+            if paper_id is not None:
+                paper = self.get_paper_by_id(int(paper_id))
+                if paper is not None:
+                    papers.append(paper)
         return papers
+
+    """
     def add_supabase_index_to_payload(self, batch_size: int = 256):
-        """
-        Iterate over all points in the Qdrant collection, compute the
-        corresponding Supabase index, and add it to the payload as `supaIndex`.
-        """
+        #Iterate over all points in the Qdrant collection, compute the
+        #corresponding Supabase index, and add it to the payload as `supaIndex`.
 
         #next_offset = None
         #total_updated = 0
@@ -212,14 +335,19 @@ class RecommendationEngine:
         )
 
         print("⚡ Payload index created for `supaIndex`")
+    """
     def embed_text(self, text: str) -> np.ndarray:
         embedding = self.embModel.encode(text)
         return embedding
 
 if __name__ == "__main__":
+    user_id = "3659c33f-9c82-40d1-aa93-7088827fa2c8"
+    recommendedId = get_recommendation(user_id)
+    papers_found = search_papers(user_id, "diphoton")
+    print("Recommended Paper IDs:", [paper.id for paper in recommendedId])
+    print("Search Paper IDs:", [paper.id for paper in papers_found])
+    """
     engine = RecommendationEngine()
-    #engine.add_supabase_index_to_payload()
-
     # Example usage
     #sample_positive_text1 = "Deep learning techniques for natural language processing"
     sample_positive_text2 = "Advancements in computer vision using convolutional neural networks"
@@ -266,3 +394,4 @@ if __name__ == "__main__":
     vector = engine.get_vector_by_paper_id(paper_id)
     if vector is not None:
         print(f"Vector for Paper ID {paper_id}: {vector}")
+    """
