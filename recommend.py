@@ -349,7 +349,7 @@ class RecommendationEngine:
     def get_vector_by_paper_id(self, paper_id: int) -> np.ndarray:
         results = self.qdrant_client.retrieve(
             collection_name=self.collection_name,
-            ids=[id for id in range(paper_id-4, paper_id+6)],  #look around +-5 IDs
+            ids=[id for id in range(paper_id-4, paper_id+6) if id > 0],  #look around +-5 IDs
         )
         for result in results:
             supa_index = result.payload.get("supaIndex", None)
