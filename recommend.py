@@ -94,14 +94,37 @@ def find_friends(paper_id: int, top_k: int = 5) -> list[papers.PaperResponse]:
         max_id = response.data[0]["id"]
     recommendation_engine = RecommendationEngine()
     paper_vector = recommendation_engine.get_vector_by_paper_id(paper_id)
+    if paper_vector is [] or paper_vector is None:
+        print("Paper Vector is empty or None. Generating random friends.")
+        friends = []
+        import random
+        while len(friends) < top_k:
+            random_id = random.randint(1, max_id)
+            if random_id not in friends:
+                try:
+                    paper = papers.get_paper(int(random_id))
+                    if paper:
+                        friends.append(paper)
+                except Exception as e:
+                    print("Warning: Failed fetching paper ID", random_id, ":", str(e))
+        #return list of papers
+        return friends
     print("Paper Vector:", paper_vector)
-    if paper_vector is None:
-        raise HTTPException(status_code=404, detail="Paper not found")
     recommended_papers = recommendation_engine.get_recommendation(
         positive_embeddings=[paper_vector],
         negative_embeddings=[],
         top_k=top_k,
-        max_id=max_id
+        filter=qdrant_models.Filter(
+            must = [
+                qdrant_models.FieldCondition(
+                    key="supaIndex",
+                    range =qdrant_models.Range(
+                        gte=1,
+                        lte=int(max_id)
+                    )
+                )
+            ]
+        )
     )
     print("Friendly Papers IDs:", recommended_papers)
     papers_l = []
@@ -211,7 +234,6 @@ def get_recommendation(user_id: int, top_k: int = 10, max_id: int = 5000) -> lis
             qdrant_models.FieldCondition(
                 key="supaIndex",
                 range =qdrant_models.Range(
-                    key="supaIndex",
                     gte=1,
                     lte=int(max_id)
                 ),
@@ -284,14 +306,18 @@ class RecommendationEngine:
         key: str = os.environ.get("QUADRANT_KEY")
         if not self.qdrant_client:
             self.qdrant_client = QdrantClient(url=url, api_key=key)
+    """
     def get_paper_by_id(self, paper_id: int) -> models.Paper:
         result = self.qdrant_client.scroll(
             collection_name=self.collection_name,
             scroll_filter=Filter(
-                must=[
-                    FieldCondition(
+                must = [
+                    qdrant_models.FieldCondition(
                         key="supaIndex",
-                        match=MatchValue(value=str(paper_id))
+                        range =qdrant_models.Range(
+                            gte=int(paper_id),
+                            lt=int(paper_id + 1)
+                        )
                     )
                 ]
             ),
@@ -319,24 +345,19 @@ class RecommendationEngine:
             paper_license=result.payload.get("paper_license", ""),
             comments=result.payload.get("comments", "")
         )
+    """
     def get_vector_by_paper_id(self, paper_id: int) -> np.ndarray:
-        result = self.qdrant_client.scroll(
+        results = self.qdrant_client.retrieve(
             collection_name=self.collection_name,
-            scroll_filter=Filter(
-                must=[
-                    FieldCondition(
-                        key="supaIndex",
-                        match=MatchValue(value=str(paper_id))
-                    )
-                ]
-            ),
-            with_payload=False,
-            with_vectors=True
+            ids=[id for id in range(paper_id-4, paper_id+6)],  #look around +-5 IDs
         )
-        if not result:
-            return None
-        result = result[0][0]
-        return np.array(result.vector)
+        for result in results:
+            supa_index = result.payload.get("supaIndex", None)
+            if supa_index == paper_id:
+                vector = result.vector
+                return np.array(vector)
+        return None
+
     def get_recommendation(self, positive_embeddings: list[np.ndarray] = [], negative_embeddings: list[np.ndarray] = [], top_k: int = 5, filter: qdrant_models.Filter = None) -> list[int]:
         if filter is None:
             filter = qdrant_models.Filter(
@@ -346,6 +367,10 @@ class RecommendationEngine:
                     )
                 ]
             )
+        if not positive_embeddings:
+            positive_embeddings = [self.embed_text("Science")]
+        if not negative_embeddings:
+            negative_embeddings = [self.embed_text("Pseudoscience")]
         recommendation = self.qdrant_client.query_points(
             collection_name=self.collection_name,
             query = qdrant_models.RecommendQuery(
