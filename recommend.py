@@ -368,7 +368,6 @@ def search_papers(user_id: int, query: str, top_k: int = 5, max_id: int = 5000) 
 class RecommendationEngine:
     qdrant_client = None
     collection_name = "arxiv_papers"
-    embModel = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B")
     def __init__(self):
         url: str = os.environ.get("QUADRANT_URL")
         key: str = os.environ.get("QUADRANT_KEY")
