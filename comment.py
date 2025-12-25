@@ -7,9 +7,6 @@ from loggin import get_current_user
 
 router = APIRouter()
 
-# Get Supabase client
-supabase = get_supabase_client()
-
 
 # -------------------
 # Schemas
@@ -70,7 +67,8 @@ def create_comment(data: CommentCreate, current_user=Depends(get_current_user)):
         # Only add parent if it's a reply to another comment
         if data.parent is not None and data.parent > 0:
             comment_data["parent"] = data.parent
-
+        # Get Supabase client
+        supabase = get_supabase_client()
         # Insert into Discussion table
         response = supabase.table("Discussion").insert(comment_data).execute()
 
@@ -109,6 +107,8 @@ def get_comment(comment_id: int):
     Get a specific comment by ID.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         response = supabase.table("Discussion").select("*").eq("id", comment_id).execute()
 
         if not response.data:
@@ -135,6 +135,8 @@ def get_article_comments(article_id: int, limit: int = 50, offset: int = 0):
     Supports pagination with limit and offset.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         response = (
             supabase.table("Discussion")
             .select("*")
@@ -165,6 +167,8 @@ def update_comment(comment_id: int, data: CommentUpdate, current_user=Depends(ge
     Only the comment author can update their comment.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         # First, check if comment exists and belongs to user
         existing = supabase.table("Discussion").select("*").eq("id", comment_id).execute()
 
@@ -224,6 +228,8 @@ def delete_comment(comment_id: int, current_user=Depends(get_current_user)):
     Only the comment author can delete their comment.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         # First, check if comment exists and belongs to user
         existing = supabase.table("Discussion").select("*").eq("id", comment_id).execute()
 
@@ -260,7 +266,8 @@ def upvote_comment(comment_id: int, current_user=Depends(get_current_user)):
     """
     try:
         user_id = current_user["id"]
-
+        # Get Supabase client
+        supabase = get_supabase_client()
         # Get current vote counts
         response = supabase.table("Discussion").select("upVotes, downVotes").eq("id", comment_id).execute()
 
@@ -341,7 +348,8 @@ def downvote_comment(comment_id: int, current_user=Depends(get_current_user)):
     """
     try:
         user_id = current_user["id"]
-
+        # Get Supabase client
+        supabase = get_supabase_client()
         # Get current vote counts
         response = supabase.table("Discussion").select("upVotes, downVotes").eq("id", comment_id).execute()
 
@@ -424,7 +432,8 @@ def get_user_discussion_threads(current_user=Depends(get_current_user)):
     try:
         user_id = current_user["id"]
         print(f"DEBUG: Fetching threads for user_id: {user_id}")
-        
+        # Get Supabase client
+        supabase = get_supabase_client()
         # Get all comments by the user
         user_comments = (
             supabase.table("Discussion")

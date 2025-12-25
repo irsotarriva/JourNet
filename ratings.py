@@ -7,9 +7,6 @@ from loggin import get_current_user
 
 router = APIRouter()
 
-# Get Supabase client
-supabase = get_supabase_client()
-
 
 # -------------------
 # Schemas
@@ -43,6 +40,8 @@ def create_rating(data: RatingCreate, current_user=Depends(get_current_user)):
     Users can only have one rating per paper - use PUT to update.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         # Check if user already rated this paper
         existing = (
             supabase.table("Ratings")
@@ -97,6 +96,8 @@ def get_paper_average_rating(paper_id: int):
     Get the average rating for a paper.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         response = (
             supabase.table("Ratings")
             .select("rating")
@@ -133,6 +134,8 @@ def get_paper_rating_distribution(paper_id: int):
     Get the distribution of ratings (1-5 stars) for a paper.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         response = (
             supabase.table("Ratings")
             .select("rating")
@@ -169,6 +172,8 @@ def get_my_rating_for_paper(paper_id: int, current_user=Depends(get_current_user
     Get the current user's rating for a specific paper.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         response = (
             supabase.table("Ratings")
             .select("*")
@@ -200,6 +205,8 @@ def get_all_my_ratings(current_user=Depends(get_current_user)):
     Get all ratings by the current user.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         response = (
             supabase.table("Ratings")
             .select("*")
@@ -227,6 +234,8 @@ def get_rating_by_id(rating_id: int, current_user=Depends(get_current_user)):
     Only returns if the rating belongs to the current user.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         response = (
             supabase.table("Ratings")
             .select("*")
@@ -259,6 +268,8 @@ def update_rating(rating_id: int, data: RatingUpdate, current_user=Depends(get_c
     Users can only update their own ratings.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         # Check if rating exists and belongs to user
         existing = (
             supabase.table("Ratings")
@@ -306,6 +317,8 @@ def delete_rating(rating_id: int, current_user=Depends(get_current_user)):
     Users can only delete their own ratings.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         # Check if rating exists and belongs to user
         existing = (
             supabase.table("Ratings")
@@ -341,6 +354,8 @@ def get_all_ratings_for_paper(paper_id: int, limit: int = 50, offset: int = 0):
     Get all ratings for a specific paper (paginated).
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         response = (
             supabase.table("Ratings")
             .select("*")
@@ -372,6 +387,8 @@ def get_top_rated_papers(limit: int = 10, min_ratings: int = 5):
     Only includes papers with at least min_ratings ratings.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         # Get all ratings
         response = supabase.table("Ratings").select("paperid, rating").execute()
 

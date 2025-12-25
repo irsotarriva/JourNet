@@ -27,8 +27,6 @@ class Server():
             allow_methods=["*"],
             allow_headers=["*"],
         )
-    def start(self, host: str = "127.0.0.1", port: int = 8000):
-        uvicorn.run(self.app, host=host, port=port)
     def get_app(self):
         return self.app
 

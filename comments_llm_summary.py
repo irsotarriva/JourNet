@@ -13,17 +13,12 @@ router = APIRouter()
 # Load environment variables
 load_dotenv()
 
-# Get Supabase client
-supabase = get_supabase_client()
-
 # Hugging Face API configuration
 HUGGING_FACE_API_KEY = os.getenv("HUGGING_FACE_API_KEY")
 if not HUGGING_FACE_API_KEY:
     print("WARNING: HUGGING_FACE_API_KEY not found in .env file")
 
 HUGGING_FACE_API_URL = "https://router.huggingface.co/hf-inference/models/facebook/bart-large-cnn"
-
-
 # -------------------
 # Schemas
 # -------------------
@@ -46,6 +41,8 @@ def get_all_comments_for_paper(paper_id: int):
     Includes upVotes and downVotes for scoring.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         response = (
             supabase.table("Discussion")
             .select("id, comment, isAnonymous, userId, created_at, upVotes, downVotes")
@@ -181,6 +178,8 @@ def update_paper_summary(paper_id: int, summary: str):
     Update the comments_summary column in the Papers table.
     """
     try:
+        # Get Supabase client
+        supabase = get_supabase_client()
         response = (
             supabase.table("Papers")
             .update({"comments_summary": summary})
