@@ -76,6 +76,8 @@ def insert_paper_into_db(supabase: Client, paperData: dict) -> int:
     return retry_operation(operation)
 
 def main():
+    #Use this to populate the articles database from the arXiv dataset. _populateArticles.py will never be called from the main server and is inteded to be run manually when the dataset is updated.
+    """
     # Download latest version
     print("Downloading latest version of arXiv dataset...")
     kaggleDSPath = kagglehub.dataset_download("Cornell-University/arxiv")
@@ -96,6 +98,7 @@ def main():
             data = json.loads(line)
             paperData = {k: v for k, v in data.items() if k not in fields_to_ignore}
             insert_paper_into_db(supabase, paperData)
+    """
 
 
 if __name__ == "__main__":
