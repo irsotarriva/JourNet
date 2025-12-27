@@ -8,3 +8,4 @@ requests==2.31.0
 qdrant-client==1.16.2
 pydantic[email]==2.12.5
 supabase==2.27.0
+huggingface_hub
