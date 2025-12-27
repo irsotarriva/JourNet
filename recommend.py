@@ -50,27 +50,20 @@ def recommend_papers(current_user=Depends(get_current_user), top_k: int = 10) ->
 
 @router.get("/search/", response_model=list[papers.PaperResponse])
 def search_recommendations(query: str, current_user=Depends(get_current_user), top_k: int = 5) -> list[papers.PaperResponse]:
-    print("Search Query:", query)
     #get the max id in supabase
     supabase: Client = get_supabase_client()
-    response = supabase.table("Papers").select("id").order("id", desc=True).limit(1).execute()
-    max_id = 0
-    if response.data:
-        max_id = response.data[0]["id"]
     user_id = current_user["id"]
-    print("User ID:", user_id)
-    recommended_papers = search_papers(user_id, query, top_k, max_id=max_id)
-    print("Search Recommended Papers IDs:", recommended_papers)
+    recommended_papers = search_papers(user_id, query, top_k=top_k)
     papers_l = []
     for paperid in recommended_papers:
         try:
             paper = papers.get_paper(int(paperid))
-            print("Fetched Paper:", paper)
             if paper:
                 papers_l.append(paper)
         except Exception as e:
             print("Warning: Failed fetching paper ID", paperid, ":", str(e))
     #pad with random papers if necessary
+    """
     while len(papers_l) < top_k:
         import random
         random_id = random.randint(1, max_id)
@@ -80,6 +73,7 @@ def search_recommendations(query: str, current_user=Depends(get_current_user), t
                 papers_l.append(paper)
         except Exception as e:
             print("Warning: Failed fetching paper ID", random_id, ":", str(e))
+    """
     return papers_l
 
 @router.get("/friends/", response_model=list[papers.PaperResponse])
@@ -107,7 +101,6 @@ def find_friends(paper_id: int, top_k: int = 5) -> list[papers.PaperResponse]:
                     print("Warning: Failed fetching paper ID", random_id, ":", str(e))
         #return list of papers
         return friends
-    print("Paper Vector:", paper_vector)
     recommended_papers = recommendation_engine.get_recommendation(
         positive_embeddings=[paper_vector],
         negative_embeddings=[],
@@ -124,13 +117,10 @@ def find_friends(paper_id: int, top_k: int = 5) -> list[papers.PaperResponse]:
             ]
         )
     )
-    print("Friendly Papers IDs:", recommended_papers)
     papers_l = []
     for paperid in recommended_papers:
         try:
             paper = papers.get_paper(int(paperid))
-            print("My friend is:", paperid)
-            print("Fetched Paper:", paper)
             if paper:
                 papers_l.append(paper)
         except Exception as e:
@@ -289,7 +279,7 @@ def _get_exact_matches(query: str, limit: int = 10) -> list[int]:
     
     return paper_ids[:limit]
 
-def search_papers(user_id: int, query: str, top_k: int = 5, max_id: int = 5000) -> list[int]:
+def search_papers(user_id: int, query: str, top_k: int = 5) -> list[int]:
     """
     @brief Search for papers using a hybrid approach: Exact matches first, then vector similarity.
     @param user_id: ID of the user.
@@ -310,7 +300,7 @@ def search_papers(user_id: int, query: str, top_k: int = 5, max_id: int = 5000) 
     
     remaining_slots = max(0, top_k - len(exact_matches))
     # If we need more, fetch a bit extra to handle duplicates
-    vector_k = remaining_slots + len(exact_matches) + 2
+    vector_k = remaining_slots + len(exact_matches) + 4
     
     # Use vector search to find conceptually similar papers
     # We still use the title/abstract match as a SHOULD filter to boost relevance, 
@@ -328,15 +318,6 @@ def search_papers(user_id: int, query: str, top_k: int = 5, max_id: int = 5000) 
             qdrant_models.FieldCondition(
                 key="abstract",
                 match=qdrant_models.MatchPhrase(phrase=query)
-            )
-        ],
-        must = [
-            qdrant_models.FieldCondition(
-                key="supaIndex",
-                range =qdrant_models.Range(
-                    gte=1,
-                    lte=int(max_id)
-                )
             )
         ]
     )
@@ -359,7 +340,8 @@ def search_papers(user_id: int, query: str, top_k: int = 5, max_id: int = 5000) 
             final_results.append(pid)
             if len(final_results) >= top_k:
                 break
-                
+    # crop to top_k
+    final_results = final_results[:top_k]
     return final_results
 
 
@@ -368,10 +350,15 @@ class RecommendationEngine:
     collection_name = "arxiv_papers"
     client = None
     def __init__(self):
-        url: str = os.environ.get("QUADRANT_URL")
-        key: str = os.environ.get("QUADRANT_KEY")
+        url: str = os.environ.get("QDRANT_URL")
+        key: str = os.environ.get("QDRANT_KEY")
         if not self.qdrant_client:
-            self.qdrant_client = QdrantClient(url=url, api_key=key)
+            self.qdrant_client = QdrantClient(
+                url=url,
+                api_key=key,
+                timeout=3600.0,      # allow up to 60 minutes
+                prefer_grpc=False
+            )
         #initialize hugging face inference client
         if not self.client:
             hf_api_key = os.environ.get("HUGGING_FACE_API_KEY")
@@ -419,7 +406,9 @@ class RecommendationEngine:
     def get_vector_by_paper_id(self, paper_id: int) -> np.ndarray:
         results = self.qdrant_client.retrieve(
             collection_name=self.collection_name,
-            ids=[id for id in range(paper_id-4, paper_id+6) if id > 0],  #look around +-5 IDs
+            ids=[paper_id],
+            with_vectors=True,
+            with_payload=True
         )
         for result in results:
             supa_index = result.payload.get("supaIndex", None)
@@ -549,8 +538,8 @@ class RecommendationEngine:
         #use hugging face inference api to to the embedding remotely
         response = self.client.feature_extraction(
             text,
-            model="thenlper/gte-large")
-        return np.array(response[0])
+            model="intfloat/multilingual-e5-large")
+        return np.array(response)
 
 if __name__ == "__main__":
     engine = RecommendationEngine()

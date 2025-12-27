@@ -6,9 +6,10 @@ from tqdm.auto import tqdm
 from connect_sql import get_supabase_client
 from supabase import Client
 from qdrant_client import QdrantClient
+from qdrant_client import models as qdrant_models
 import os
 from sentence_transformers import SentenceTransformer
-from qdrant_client.models import VectorParams, Distance, PointStruct
+from qdrant_client.models import VectorParams, Distance, PointStruct , PointVectors
 # Qdrant configuration
 qdrant_url = os.environ.get("QDRANT_URL")
 qdrant_api_key = os.environ.get("QDRANT_KEY")
@@ -16,7 +17,9 @@ if not qdrant_url or not qdrant_api_key:
     raise ValueError("QDRANT_URL and QDRANT_KEY must be set in environment variables.")
 qdrant_client = QdrantClient(
     url=qdrant_url,
-    api_key=qdrant_api_key
+    api_key=qdrant_api_key,
+    timeout=3600.0,      # allow up to 60 minutes
+    prefer_grpc=False
 )
 collection_name = "arxiv_papers"
 # Create collection if it doesn't exist
@@ -26,7 +29,7 @@ if not qdrant_client.collection_exists(collection_name):
         vectors_config=VectorParams(size=1024, distance=Distance.COSINE)
     )
 class Embedder:
-    model = SentenceTransformer("thenlper/gte-large")
+    model = SentenceTransformer("intfloat/multilingual-e5-large")
     def __init__(self):
         pass
     def embed_text(self, texts: list[str]) -> list[np.ndarray]:
@@ -165,8 +168,7 @@ def insert_papers_into_db(supabase: Client, paperData: list[dict], embedding: li
 
 def main():
     #Use this to populate the articles database from the arXiv dataset. _populateArticles.py will never be called from the main server and is inteded to be run manually when the dataset is updated.
-    """
-    # Download latest version
+   # Download latest version
     print("Downloading latest version of arXiv dataset...")
     kaggleDSPath = kagglehub.dataset_download("Cornell-University/arxiv")
     print("Path to dataset files:", kaggleDSPath)
@@ -186,6 +188,7 @@ def main():
     embedder_instance = Embedder()
 
     with open(kaggleDSPath + "/arxiv-metadata-oai-snapshot.json", "r") as f:
+        """
         # If last_id exists, skip to that line
         for lineNumber, line in enumerate(tqdm(f, total=totalLines, desc="Processing arXiv dataset")):
             if lineNumber < last_id:
@@ -213,8 +216,144 @@ def main():
             abstracts = [paper.get("abstract", "") for paper in papers_batch]
             embeddings_batch = embedder_instance.embed_text(abstracts)
             insert_papers_into_db(supabase, papers_batch, embeddings_batch)
-        #Index the qdrantb for quick seach. supaIndex as an index type field, and title, authors, and abstract as text fields.
+        """
+        #index the qdrant text fields (title, authors, abstract) for better search
+        print("Creating Qdrant title text index...")
+        qdrant_client.create_payload_index(
+            collection_name=collection_name,
+            field_name="title",
+            field_schema=qdrant_models.TextIndexParams(
+                type=qdrant_models.TextIndexType.TEXT,
+                tokenizer=qdrant_models.TokenizerType.WORD,
+                min_token_len = 2,
+                max_token_len = 10,
+                lowercase = True,
+                phrase_matching=True,
+            ),
+        )
+        print("Creating Qdrant authors text index...")
+        qdrant_client.create_payload_index(
+            collection_name=collection_name,
+            field_name="authors",
+            field_schema=qdrant_models.TextIndexParams(
+                type=qdrant_models.TextIndexType.TEXT,
+                tokenizer=qdrant_models.TokenizerType.WORD,
+                min_token_len = 2,
+                max_token_len = 10,
+                lowercase = True,
+                phrase_matching=True,
+            ),
+        )  
+        print("Creating Qdrant abstract text index...")
+        qdrant_client.create_payload_index(
+            collection_name=collection_name,
+            field_name="abstract",
+            field_schema=qdrant_models.TextIndexParams(
+                type=qdrant_models.TextIndexType.TEXT,
+                tokenizer=qdrant_models.TokenizerType.WORD,
+                min_token_len = 2,
+                max_token_len = 10,
+                lowercase = True,
+                phrase_matching=True,
+            ),
+        )
+        #index the numeric supaIndex field as prinipal integer index
+        print("Creating Qdrant supaIndex integer index...")
+        qdrant_client.create_payload_index(
+            collection_name=collection_name,
+            field_name="supaIndex",
+            field_schema=qdrant_models.IntegerIndexParams(
+                type=qdrant_models.IntegerIndexType.INTEGER,
+                is_principal=True,
+            ),
+        )
+        """
+        #Remove qdrant entries outside of the supabase range
+        print("Cleaning up Qdrant entries outside of Supabase range...")
+        #first_id = retry_operation(lambda: supabase.table("Papers").select("id").order("id", desc=True).limit(1).execute())
+        #first_id = int(first_id.data[0]["id"]) if first_id.data else 0
+        #last_id = retry_operation(lambda: supabase.table("Papers").select("id").order("id", desc=False).limit(1).execute())
+        #last_id = int(last_id.data[0]["id"]) if last_id.data else 0
+        first_id = 12421
+        last_id = 350000
+        print(f"Supabase paper ID range: {first_id} to {last_id}")
+        # Delete Qdrant points with supaIndex less than first_id
+        qdrant_client.delete(
+            collection_name=collection_name,
+            points_selector=qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="supaIndex",
+                        range=qdrant_models.Range(
+                            lt=first_id,
+                        )
+                    )
+                ]
+            )
+        )
+        # Delete Qdrant points with supaIndex greater than last_id
+        qdrant_client.delete(
+            collection_name=collection_name,
+            points_selector=qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="supaIndex",
+                        range=qdrant_models.Range(
+                            gt=last_id,
+                        )
+                    )
+                ]
+            )
+        )
+        """
 
+def recompute_embeddings_for_all_papers():
+    print("Recomputing embeddings for all papers in Qdrant...")
+    embedder_instance = Embedder()
+    batch_size = 100
+    start_index = int(12421 + 230*batch_size)  # Adjusted to skip already processed entries
+    max_index = 350000
+    #iterate over all papers in qdrant in batches, copy the pyload and rewrite the vector with the new embedding.
+    offset = 0 #used to retry in case of empty points by increasing the offset by one until we get a non empty batch
+    for idx in tqdm(range(start_index, max_index + 1, batch_size), desc="Recomputing embeddings"):
+        while True:
+            points=qdrant_client.scroll(
+                collection_name=collection_name,
+                offset=idx+offset,
+                limit=batch_size,
+                with_payload=True,
+                with_vectors=False
+            )
+            abstracts = []
+            ids = []
+            for point in points[0]:
+                if point is None:
+                    continue
+                if point.payload is None:
+                    continue
+                abstracts.append(point.payload.get("abstract", ""))
+                ids.append(point.id)
+            print(f"Fetched {len(abstracts)} abstracts at offset {idx+offset}")
+            if len(abstracts) > 0:
+                embeddings = embedder_instance.embed_text(abstracts)
+                batch_points = []
+                for id, emb in zip(ids, embeddings):
+                    batch_points.append(PointStruct(id=id, vector=emb.tolist()))
+                print(f"Updating embeddings for {len(batch_points)} points at offset {idx+offset}")
+                print(f"Sample updated point ID {batch_points[0].id} with vector norm {np.linalg.norm(np.array(batch_points[0].vector)):.4f}")
+                qdrant_client.update_vectors(
+                    collection_name=collection_name,
+                    points=batch_points
+                )
+                break
+            else:
+                print(f"Warning: No points found at offset {idx+offset}, increasing offset and retrying...")
+                offset += 1
+                if start_index + offset > max_index:
+                    print("No more points to process.")
+                    return
+    
 
 if __name__ == "__main__":
-    main()
+    #main()
+    recompute_embeddings_for_all_papers()
