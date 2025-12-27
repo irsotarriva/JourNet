@@ -164,6 +164,8 @@ def insert_papers_into_db(supabase: Client, paperData: list[dict], embedding: li
     return paper_ids
 
 def main():
+    #Use this to populate the articles database from the arXiv dataset. _populateArticles.py will never be called from the main server and is inteded to be run manually when the dataset is updated.
+    """
     # Download latest version
     print("Downloading latest version of arXiv dataset...")
     kaggleDSPath = kagglehub.dataset_download("Cornell-University/arxiv")

@@ -1,13 +1,10 @@
 #import server
-import models
-from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 import numpy as np
 from qdrant_client import QdrantClient
 from qdrant_client import models as qdrant_models
-from qdrant_client.http.models import Filter, FieldCondition, MatchValue
-from sentence_transformers import SentenceTransformer
+from qdrant_client.http.models import Filter, FieldCondition
 from connect_sql import get_supabase_client
 from supabase import Client
 from fastapi import APIRouter, HTTPException, Depends, requests, status
