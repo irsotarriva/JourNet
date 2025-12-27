@@ -10,10 +10,11 @@ from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 from sentence_transformers import SentenceTransformer
 from connect_sql import get_supabase_client
 from supabase import Client
-from fastapi import APIRouter, HTTPException, Depends, status
-import server
+from fastapi import APIRouter, HTTPException, Depends, requests, status
+from huggingface_hub import InferenceClient
 import papers
 from loggin import get_current_user
+
 
 # Load environment variables once
 load_dotenv()
@@ -368,12 +369,16 @@ def search_papers(user_id: int, query: str, top_k: int = 5, max_id: int = 5000) 
 class RecommendationEngine:
     qdrant_client = None
     collection_name = "arxiv_papers"
-    embModel = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B")
+    client = None
     def __init__(self):
         url: str = os.environ.get("QUADRANT_URL")
         key: str = os.environ.get("QUADRANT_KEY")
         if not self.qdrant_client:
             self.qdrant_client = QdrantClient(url=url, api_key=key)
+        #initialize hugging face inference client
+        if not self.client:
+            hf_api_key = os.environ.get("HUGGING_FACE_API_KEY")
+            self.client = InferenceClient(provider="hf-inference", api_key=hf_api_key)
     """
     def get_paper_by_id(self, paper_id: int) -> models.Paper:
         result = self.qdrant_client.scroll(
@@ -544,8 +549,11 @@ class RecommendationEngine:
         print("⚡ Payload index created for `supaIndex`")
     """
     def embed_text(self, text: str) -> np.ndarray:
-        embedding = self.embModel.encode(text)
-        return embedding
+        #use hugging face inference api to to the embedding remotely
+        response = self.client.feature_extraction(
+            text,
+            model="thenlper/gte-large")
+        return np.array(response[0])
 
 if __name__ == "__main__":
     engine = RecommendationEngine()
